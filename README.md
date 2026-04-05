@@ -284,6 +284,14 @@ The verify smoke currently exercises:
 - base decryption and full verify on the default dataset (`TEST_DIR`, default `/mnt/e/test/uo`)
 - base decryption and full verify on the multi-update dataset (`MULTI_UPDATE_DIR`, default `/mnt/e/test/op`)
 - base `.nsz` decryption and full verify on `MULTI_UPDATE_DIR`
+- Python-style multi-input verify behavior (`--verify file1 file2` -> last explicit file wins)
+- Python-style mass verify behavior (`--verify all --text_file filelist.txt` -> first line from the filelist is used)
+
+To run only the verify regression slice instead of the full parity suite:
+
+```bash
+PARITY_ONLY=verify ./run_parity_exact.sh
+```
 
 The Rust binary never delegates to `squirrel.py`. The Python reference is only used by the parity harness for comparison.
 

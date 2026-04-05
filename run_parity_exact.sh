@@ -245,6 +245,84 @@ run_verify_parity_smoke_case() {
   fi
 }
 
+run_verify_parity_smoke_multi_case() {
+  local label="$1"
+  local input_a="$2"
+  local input_b="$3"
+  local rust_log="$OUT_DIR/logs/${label}_rust.log"
+  local py_log="$OUT_DIR/logs/${label}_py.log"
+  local rust_norm="$OUT_DIR/cmp/${label}_rust.norm"
+  local py_norm="$OUT_DIR/cmp/${label}_py.norm"
+  local diff_file="$OUT_DIR/cmp/${label}.diff"
+
+  (
+    cd "$ROOT_DIR"
+    printf '2\n2\n' | "${RUST_BIN[@]}" --verify "$input_a" "$input_b" --keys "$KEYS" >"$rust_log" 2>&1
+  ) || true
+  (
+    cd "$PY_ZTOOLS"
+    printf '2\n2\n' | "$PYTHON_BIN" squirrel.py -v "$input_a" "$input_b" >"$py_log" 2>&1
+  ) || true
+
+  normalize_verify_output "$rust_log" "$rust_norm"
+  normalize_verify_output "$py_log" "$py_norm"
+
+  if diff -u "$py_norm" "$rust_norm" >"$diff_file" 2>&1; then
+    echo "$label: ok"
+  else
+    echo "$label: failed"
+    FAIL=1
+  fi
+}
+
+run_verify_parity_textfile_case() {
+  local label="$1"
+  local first_input="$2"
+  local second_input="$3"
+  local case_dir="$OUT_DIR/verify_cases/$label"
+  local rust_case_dir="$case_dir/rust"
+  local py_case_dir="$case_dir/py"
+  local rust_log="$OUT_DIR/logs/${label}_rust.log"
+  local py_log="$OUT_DIR/logs/${label}_py.log"
+  local rust_norm="$OUT_DIR/cmp/${label}_rust.norm"
+  local py_norm="$OUT_DIR/cmp/${label}_py.norm"
+  local diff_file="$OUT_DIR/cmp/${label}.diff"
+  local rust_filelist="$rust_case_dir/filelist.txt"
+  local py_filelist="$py_case_dir/filelist.txt"
+  local base_name
+  local verify_name
+
+  mkdir -p "$rust_case_dir" "$py_case_dir"
+  printf '%s\n%s\n' "$first_input" "$second_input" >"$rust_filelist"
+  printf '%s\n%s\n' "$first_input" "$second_input" >"$py_filelist"
+  base_name="$(basename "$first_input")"
+  verify_name="${base_name%????}-verify.txt"
+
+  (
+    cd "$ROOT_DIR"
+    "${RUST_BIN[@]}" --verify all --vertype full --text_file "$rust_filelist" --keys "$KEYS" >"$rust_log" 2>&1
+  ) || true
+  (
+    cd "$PY_ZTOOLS"
+    "$PYTHON_BIN" squirrel.py -v all --vertype full --text_file "$py_filelist" >"$py_log" 2>&1
+  ) || true
+
+  normalize_verify_output "$rust_log" "$rust_norm"
+  normalize_verify_output "$py_log" "$py_norm"
+
+  if diff -u "$py_norm" "$rust_norm" >"$diff_file" 2>&1; then
+    echo "$label stdout: ok"
+  else
+    echo "$label stdout: failed"
+    FAIL=1
+  fi
+
+  diff -u \
+    "$py_case_dir/INFO/MASSVERIFY/$verify_name" \
+    "$rust_case_dir/INFO/MASSVERIFY/$verify_name" \
+    >"$OUT_DIR/cmp/${label}_info.diff" 2>&1 || FAIL=1
+}
+
 normalize_advfilelist_parity_output() {
   local input="$1"
   local output="$2"
@@ -277,12 +355,15 @@ run_py_info() {
 
 need_file "$KEYS"
 need_file "$BASE_FILE"
-need_file "$UPD_FILE"
-need_file "$SMALL_NSZ"
 
-if [[ "${#DLC_FILES[@]}" -lt 2 ]]; then
-  echo "Expected at least 2 DLC NSP files under $TEST_DIR" >&2
-  exit 1
+if [[ "$PARITY_ONLY" != "verify" ]]; then
+  need_file "$UPD_FILE"
+  need_file "$SMALL_NSZ"
+
+  if [[ "${#DLC_FILES[@]}" -lt 2 ]]; then
+    echo "Expected at least 2 DLC NSP files under $TEST_DIR" >&2
+    exit 1
+  fi
 fi
 
 HAVE_PY=0
@@ -327,6 +408,23 @@ if [[ "$HAVE_PY" -eq 1 ]]; then
   if [[ -f "$VERIFY_BASE_NSZ_FILE" ]]; then
     run_verify_parity_smoke_case "verify_op_base_nsz_dec" "$VERIFY_BASE_NSZ_FILE" dec "2 2"
     run_verify_parity_smoke_case "verify_op_base_nsz_full" "$VERIFY_BASE_NSZ_FILE" full "1 2"
+  fi
+  if [[ -f "$VERIFY_BASE_NSZ_FILE" ]]; then
+    run_verify_parity_smoke_multi_case "verify_multi_last_input_wins" "$BASE_FILE" "$VERIFY_BASE_NSZ_FILE"
+    run_verify_parity_textfile_case "verify_text_file_all" "$BASE_FILE" "$VERIFY_BASE_NSZ_FILE"
+  fi
+
+  if [[ "$PARITY_ONLY" == "verify" ]]; then
+    echo
+    if [[ "$FAIL" -eq 0 ]]; then
+      echo "Verify parity PASSED."
+      echo "Artifacts and logs: $OUT_DIR"
+      exit 0
+    else
+      echo "Verify parity FAILED." >&2
+      echo "Inspect logs/artifacts under: $OUT_DIR" >&2
+      exit 1
+    fi
   fi
 
   log "Rename parity"

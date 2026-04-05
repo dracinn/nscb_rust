@@ -307,8 +307,10 @@ pub fn dispatch(args: Args) -> Result<()> {
     if let Some(files) = &args.verify {
         let ks = get_key_store(&mut key_store, args.keys.as_deref())?;
         let vertype = args.vertype.as_deref().unwrap_or("dec");
-        for path in files {
-            crate::ops::verify::verify(path, ks, vertype, args.text_file.as_deref())?;
+        if let Some(text_file) = args.text_file.as_deref() {
+            crate::ops::verify::verify_from_text_file(text_file, ks, vertype)?;
+        } else if let Some(path) = files.last() {
+            crate::ops::verify::verify(path, ks, vertype, None)?;
         }
         return Ok(());
     }

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 
 use crate::crypto::aes_ecb;
 use crate::crypto::hash;
@@ -78,11 +79,15 @@ fn content_type_py(ct: Option<ContentType>) -> &'static str {
 }
 
 fn normalize_vertype(vertype: &str) -> &str {
-    match vertype {
-        "dec" | "lv1" => "lv1",
-        "sig" | "lv2" => "lv2",
-        "full" | "lv3" => "lv3",
-        _ => "lv1",
+    if vertype == "dec" || vertype == "lv1" {
+        "lv1"
+    } else if vertype == "sig" || vertype == "lv2" {
+        "lv2"
+    } else if vertype == "sig" || vertype == "lv3" {
+        // Match squirrel.py exactly: "full" falls through to lv1 here.
+        "lv3"
+    } else {
+        "lv1"
     }
 }
 
@@ -109,6 +114,19 @@ pub fn verify(path: &str, ks: &KeyStore, vertype: &str, text_file: Option<&str>)
             ext
         ))),
     }
+}
+
+pub fn verify_from_text_file(text_file: &str, ks: &KeyStore, vertype: &str) -> Result<()> {
+    let file_contents = std::fs::read_to_string(text_file)?;
+    let first_line = file_contents
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .ok_or_else(|| NscbError::InvalidData("verify text file is empty".into()))?;
+    let path = std::fs::canonicalize(first_line)?;
+    let path_str = path.to_string_lossy().to_string();
+    verify(&path_str, ks, vertype, Some(text_file))
 }
 
 fn verify_nsp(path: &str, ks: &KeyStore, vertype: &str, text_file: Option<&str>) -> Result<()> {
@@ -156,25 +174,36 @@ fn run_verify<R: Read + Seek>(
 ) -> Result<()> {
     let token = container_token(path);
     let mut feed = String::new();
+    let mut overall_verdict = true;
 
     if text_file.is_some() {
         // Non-interactive mode: respect vertype
         let (dec_verdict, dec_output) = run_dec_test(entries, reader, path, ks, token)?;
         print!("{}", dec_output);
         feed.push_str(&dec_output);
+        overall_verdict = dec_verdict;
 
         if vertype == "lv2" || vertype == "lv3" {
             let (sig_verdict, header_info, sig_output) = run_sig_test(entries, reader, ks, token)?;
             print!("{}", sig_output);
             feed.push_str(&sig_output);
+            if overall_verdict {
+                overall_verdict = sig_verdict;
+            }
 
             if vertype == "lv3" {
-                let (_, hash_output) =
+                let (hash_verdict, hash_output) =
                     run_hash_test(entries, reader, ks, token, &header_info, sig_verdict)?;
                 print!("{}", hash_output);
                 feed.push_str(&hash_output);
+                if overall_verdict {
+                    overall_verdict = hash_verdict;
+                }
             }
-            let _ = (dec_verdict, sig_verdict);
+        }
+
+        if let Some(text_file) = text_file {
+            write_massverify_outputs(path, text_file, &feed, overall_verdict)?;
         }
     } else {
         // Interactive mode: always run LV1 + LV2 + prompt for LV3 + prompt for text file
@@ -243,6 +272,42 @@ fn run_verify<R: Read + Seek>(
     Ok(())
 }
 
+fn write_massverify_outputs(
+    verified_path: &str,
+    text_file: &str,
+    feed: &str,
+    verdict: bool,
+) -> Result<()> {
+    let list_dir = Path::new(text_file)
+        .parent()
+        .ok_or_else(|| NscbError::InvalidData("text file path has no parent directory".into()))?;
+    let info_dir = list_dir.join("INFO").join("MASSVERIFY");
+    std::fs::create_dir_all(&info_dir)?;
+
+    let basename = Path::new(verified_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| NscbError::InvalidData("invalid verified filename".into()))?;
+    let verify_name = if basename.len() >= 4 {
+        format!("{}-verify.txt", &basename[..basename.len() - 4])
+    } else {
+        format!("{}-verify.txt", basename)
+    };
+    std::fs::write(info_dir.join(verify_name), feed)?;
+
+    if !verdict {
+        let err_path = list_dir.join("badfiles.txt");
+        let mut err = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(err_path)?;
+        writeln!(err, "Filename: {}", verified_path)?;
+        writeln!(err, "IS INCORRECT")?;
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // lv1: Decryption test
 // ---------------------------------------------------------------------------
@@ -260,7 +325,9 @@ fn run_dec_test<R: Read + Seek>(
     let mut out = String::new();
     let mut verdict = true;
 
-    out.push_str("DECRYPTION TEST:\n");
+    out.push_str("***************\n");
+    out.push_str("DECRYPTION TEST\n");
+    out.push_str("***************\n");
 
     let nca_entries: Vec<&ContainerEntry> = entries
         .iter()
@@ -330,11 +397,6 @@ fn run_dec_test<R: Read + Seek>(
                 } else {
                     out.push_str(&format!("{}{}{tabs}  -> is CORRECT\n", tabs, entry.name));
                 }
-                if baddec {
-                    out.push_str(&format!(
-                        "{tabs}  * NOTE: S.C. CONVERSION WAS PERFORMED WITH BAD KEY\n"
-                    ));
-                }
             } else {
                 verdict = false;
                 if is_cnmt {
@@ -343,11 +405,6 @@ fn run_dec_test<R: Read + Seek>(
                     out.push_str(&format!(
                         "{}{}{tabs}  -> is CORRUPT <<<-\n",
                         tabs, entry.name
-                    ));
-                }
-                if baddec {
-                    out.push_str(&format!(
-                        "{tabs}  * NOTE: S.C. CONVERSION WAS PERFORMED WITH BAD KEY\n"
                     ));
                 }
             }
@@ -1101,7 +1158,9 @@ fn run_sig_test<R: Read + Seek>(
     let mut verdict = true;
     let mut header_info: Vec<NcaSigInfo> = Vec::new();
 
-    out.push_str("\nSIGNATURE 1 TEST:\n");
+    out.push_str("\n****************\n");
+    out.push_str("SIGNATURE 1 TEST\n");
+    out.push_str("****************\n");
 
     let nca_entries: Vec<&ContainerEntry> = entries
         .iter()
