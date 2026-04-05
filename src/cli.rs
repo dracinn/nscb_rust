@@ -78,6 +78,18 @@ pub struct Args {
     #[arg(long = "dlcrname")]
     pub dlcrname: Option<String>,
 
+    /// Verify NSP or XCI file integrity
+    #[arg(long = "verify", short = 'v', num_args = 1..)]
+    pub verify: Option<Vec<String>>,
+
+    /// Verification type for --verify: dec/lv1, sig/lv2, full/lv3 [default: dec]
+    #[arg(long = "vertype", value_name = "TYPE")]
+    pub vertype: Option<String>,
+
+    /// Write verification output to a text file instead of prompting
+    #[arg(long = "text_file", value_name = "PATH")]
+    pub text_file: Option<String>,
+
     /// Refresh the local NUTDB cache using conditional HTTP when supported
     #[arg(long = "nutdb-refresh")]
     pub nutdb_refresh: bool,
@@ -290,6 +302,15 @@ pub fn dispatch(args: Args) -> Result<()> {
     if let Some(path) = &args.decompress {
         let output = make_output_path(path, &args.ofolder, &decompress_ext(path));
         return crate::ops::decompress::decompress(path, &output);
+    }
+
+    if let Some(files) = &args.verify {
+        let ks = get_key_store(&mut key_store, args.keys.as_deref())?;
+        let vertype = args.vertype.as_deref().unwrap_or("dec");
+        for path in files {
+            crate::ops::verify::verify(path, ks, vertype, args.text_file.as_deref())?;
+        }
+        return Ok(());
     }
 
     eprintln!("No operation specified. Use --help for usage.");

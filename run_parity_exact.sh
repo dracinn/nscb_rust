@@ -26,6 +26,11 @@ MULTI_UPD_OLD_FILE="${MULTI_UPD_OLD_FILE:-$(find "$MULTI_UPDATE_DIR" -maxdepth 1
 MULTI_UPD_NEW_FILE="${MULTI_UPD_NEW_FILE:-$(find "$MULTI_UPDATE_DIR" -maxdepth 1 -type f \( -name '[[]UPD[]]*v1.0.5*.nsz' -o -name '[[]UPD[]]*v1.0.5*.nsp' \) | sort | head -n1)}"
 TF_BASE_FILE="${TF_BASE_FILE:-$(find "$TF_DIR" -maxdepth 1 -type f -name '*.xci' | sort | head -n1)}"
 TF_UPD_FILE="${TF_UPD_FILE:-$(find "$TF_DIR" -maxdepth 1 -type f -name '*.nsp' | sort | head -n1)}"
+VERIFY_OP_BASE_FILE="${VERIFY_OP_BASE_FILE:-$(find "$MULTI_UPDATE_DIR" -maxdepth 1 -type f -name '*.xci' | sort | head -n1)}"
+if [[ -z "$VERIFY_OP_BASE_FILE" ]]; then
+  VERIFY_OP_BASE_FILE="${VERIFY_OP_BASE_FILE:-$(find "$MULTI_UPDATE_DIR" -maxdepth 1 -type f -name '*.nsp' ! -name '[[]UPD[]]*' ! -name '[[]DLC[]]*' | sort | head -n1)}"
+fi
+VERIFY_BASE_NSZ_FILE="${VERIFY_BASE_NSZ_FILE:-$(find "$MULTI_UPDATE_DIR" -maxdepth 1 -type f -name '*.nsz' ! -name '[[]UPD[]]*' ! -name '[[]DLC[]]*' | sort | head -n1)}"
 
 need_file() {
   local p="$1"
@@ -177,6 +182,69 @@ Path(sys.argv[2]).write_text("\n".join(src) + ("\n" if src else ""))
 PY
 }
 
+normalize_verify_output() {
+  local input="$1"
+  local output="$2"
+  python3 - "$input" "$output" <<'PY'
+from pathlib import Path
+import sys
+
+lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
+filtered = []
+for line in lines:
+    if 'squirrel.py:' in line:
+        continue
+    if line.strip() == "'''":
+        continue
+    if 'RSV' in line and '0/0' in line:
+        continue
+    if '|' in line and ('%|' in line or '/s]' in line or '[00:' in line):
+        continue
+    if line.strip().startswith('*') and len(line.strip()) > 10:
+        continue
+    if line.strip() == '':
+        continue
+    if line.strip() == 'DECRYPTION TEST':
+        line = 'DECRYPTION TEST:'
+    if line.strip() == 'SIGNATURE 1 TEST':
+        line = 'SIGNATURE 1 TEST:'
+    filtered.append(line)
+
+Path(sys.argv[2]).write_text("\n".join(filtered) + ("\n" if filtered else ""))
+PY
+}
+
+run_verify_parity_smoke_case() {
+  local label="$1"
+  local input_file="$2"
+  local vertype="$3"
+  local answers="$4"
+  local rust_log="$OUT_DIR/logs/${label}_rust.log"
+  local py_log="$OUT_DIR/logs/${label}_py.log"
+  local rust_norm="$OUT_DIR/cmp/${label}_rust.norm"
+  local py_norm="$OUT_DIR/cmp/${label}_py.norm"
+  local diff_file="$OUT_DIR/cmp/${label}.diff"
+
+  (
+    cd "$ROOT_DIR"
+    printf '%s\n' $answers | "${RUST_BIN[@]}" --verify "$input_file" --keys "$KEYS" --vertype "$vertype" >"$rust_log" 2>&1
+  ) || true
+  (
+    cd "$PY_ZTOOLS"
+    printf '%s\n' $answers | "$PYTHON_BIN" squirrel.py -v "$input_file" --vertype "$vertype" >"$py_log" 2>&1
+  ) || true
+
+  normalize_verify_output "$rust_log" "$rust_norm"
+  normalize_verify_output "$py_log" "$py_norm"
+
+  if diff -u "$py_norm" "$rust_norm" >"$diff_file" 2>&1; then
+    echo "$label: ok"
+  else
+    echo "$label: failed"
+    FAIL=1
+  fi
+}
+
 normalize_advfilelist_parity_output() {
   local input="$1"
   local output="$2"
@@ -249,6 +317,18 @@ log "Build Rust binary"
 )
 
 if [[ "$HAVE_PY" -eq 1 ]]; then
+  log "Verify parity smoke"
+  run_verify_parity_smoke_case "verify_uo_base_dec" "$BASE_FILE" dec "2 2"
+  run_verify_parity_smoke_case "verify_uo_base_full" "$BASE_FILE" full "1 2"
+  if [[ -f "$VERIFY_OP_BASE_FILE" ]]; then
+    run_verify_parity_smoke_case "verify_op_base_dec" "$VERIFY_OP_BASE_FILE" dec "2 2"
+    run_verify_parity_smoke_case "verify_op_base_full" "$VERIFY_OP_BASE_FILE" full "1 2"
+  fi
+  if [[ -f "$VERIFY_BASE_NSZ_FILE" ]]; then
+    run_verify_parity_smoke_case "verify_op_base_nsz_dec" "$VERIFY_BASE_NSZ_FILE" dec "2 2"
+    run_verify_parity_smoke_case "verify_op_base_nsz_full" "$VERIFY_BASE_NSZ_FILE" full "1 2"
+  fi
+
   log "Rename parity"
   mkdir -p "$OUT_DIR/rename_cases" "$OUT_DIR/rust_nutdb_cache"
   (

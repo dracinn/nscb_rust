@@ -4,6 +4,7 @@ Rust implementation of core Nintendo Switch content workflows inspired by NSC_Bu
 
 Implemented operations:
 - Merge (`--direct_multi`, `-d`)
+- Verify container integrity and parity-style checks (`--verify`)
 - Rename files/folders using package metadata + NUTDB (`--renamef`)
 - Split (`--splitter`)
 - Split to repacked files (`--dspl`)
@@ -236,6 +237,20 @@ target/release/nscb \
   -o /path/to/output
 ```
 
+### 14) Verify NSP/XCI/NSZ/XCZ contents
+
+```bash
+target/release/nscb \
+  --verify "game.nsp_or_xci_or_nsz" \
+  --vertype full \
+  --keys /path/to/prod.keys
+```
+
+Verify modes:
+- `--vertype dec`: decryption test
+- `--vertype sig`: signature test
+- `--vertype full`: full flow including hash verification prompt
+
 ## Notes
 
 - Progress bars are implemented for merge/decompress/convert operations, and also for compress/split.
@@ -252,6 +267,7 @@ Use the included parity runner to compare Rust outputs against NSC_BUILDER Pytho
 ```
 
 `run_parity_exact.sh` is the single canonical regression entrypoint. It covers:
+- verify parity smoke on two datasets (`TEST_DIR` and `MULTI_UPDATE_DIR`), including base `.nsz` verification
 - merge parity (`nsp` and `xci`)
 - split parity
 - create parity
@@ -263,6 +279,11 @@ Use the included parity runner to compare Rust outputs against NSC_BUILDER Pytho
 - `dspl` filename parity
 - firmware-control regression
 - multi-update selection regression (`v1.0.4` + `v1.0.5` -> keep `v1.0.5`)
+
+The verify smoke currently exercises:
+- base decryption and full verify on the default dataset (`TEST_DIR`, default `/mnt/e/test/uo`)
+- base decryption and full verify on the multi-update dataset (`MULTI_UPDATE_DIR`, default `/mnt/e/test/op`)
+- base `.nsz` decryption and full verify on `MULTI_UPDATE_DIR`
 
 The Rust binary never delegates to `squirrel.py`. The Python reference is only used by the parity harness for comparison.
 

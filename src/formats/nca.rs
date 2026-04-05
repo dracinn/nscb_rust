@@ -58,6 +58,8 @@ pub struct NcaHeader {
     pub sdk_version: u32,
     /// Extended crypto type at 0x220
     pub crypto_type2: u8,
+    /// Signature key generation at 0x221 (selects NCA header fixed-key modulus)
+    pub sig_key_generation: u8,
     /// Rights ID (non-zero means title-key crypto)
     pub rights_id: [u8; 16],
     /// Section table entries (4)
@@ -143,6 +145,7 @@ impl NcaHeader {
         let title_id = u64::from_le_bytes(data[0x210..0x218].try_into().unwrap());
         let sdk_version = u32::from_le_bytes(data[0x21C..0x220].try_into().unwrap());
         let crypto_type2 = data[0x220];
+        let sig_key_generation = data[0x221];
 
         let mut rights_id = [0u8; 16];
         rights_id.copy_from_slice(&data[0x230..0x240]);
@@ -184,6 +187,7 @@ impl NcaHeader {
             title_id,
             sdk_version,
             crypto_type2,
+            sig_key_generation,
             rights_id,
             section_table,
             section_hashes,
@@ -312,6 +316,16 @@ impl NcaHeader {
     /// Get the raw decrypted header bytes.
     pub fn raw_bytes(&self) -> &[u8] {
         &self.raw
+    }
+
+    /// RSA-PSS Signature 1 (bytes 0x000..0x100 of decrypted header).
+    pub fn signature1(&self) -> &[u8] {
+        &self.raw[0x000..0x100]
+    }
+
+    /// The data covered by Signature 1 (bytes 0x200..0x400 of decrypted header).
+    pub fn signed_header_data(&self) -> &[u8] {
+        &self.raw[0x200..0x400]
     }
 
     pub fn hblock_block_size(&self) -> u32 {
@@ -719,7 +733,7 @@ fn pfs0_candidate_offsets(section: &[u8]) -> Vec<usize> {
     out
 }
 
-fn aes_ctr_transform_in_place(
+pub(crate) fn aes_ctr_transform_in_place(
     key: &[u8; 16],
     nonce8: &[u8; 8],
     file_offset: u64,

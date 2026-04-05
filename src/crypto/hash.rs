@@ -39,6 +39,11 @@ pub fn sha256_n<R: Read>(reader: &mut R, size: u64) -> std::io::Result<[u8; 32]>
     Ok(hasher.finalize().into())
 }
 
+/// Compute SHA-256 of exactly `size` bytes starting at the current reader position.
+pub fn sha256_bounded<R: Read>(reader: &mut R, size: u64) -> std::io::Result<[u8; 32]> {
+    sha256_n(reader, size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

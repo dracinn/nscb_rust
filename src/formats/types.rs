@@ -265,6 +265,44 @@ pub fn apply_patcher_meta_rsv(keygeneration: u8, current_rsv: u32, requested_rsv
     }
 }
 
+/// Key generation string list for RSV brute-force, matching Python's sq_tools.kgstring().
+/// Ordered from highest keygen (13) to lowest (0), each containing RSV values.
+pub fn kgstring() -> Vec<Vec<u32>> {
+    vec![
+        vec![872_415_232, 873_463_808], // kg13
+        vec![806_354_944],              // kg12
+        vec![
+            605_028_352,
+            606_076_928,
+            671_088_640,
+            671_154_176,
+            671_219_712,
+            671_285_248,
+            671_350_784,
+            672_137_216,
+            672_202_752,
+            673_185_792,
+            738_197_504,
+            738_263_040,
+            805_306_368,
+            805_371_904,
+            805_437_440,
+            805_502_976,
+        ], // kg11
+        vec![603_979_776, 604_045_312], // kg10
+        vec![537_919_488],              // kg9
+        vec![536_936_448, 536_870_912, 469_827_584, 469_762_048], // kg8
+        vec![404_750_336],              // kg7
+        vec![403_701_760, 402_718_720, 402_653_184], // kg6
+        vec![336_592_896, 335_675_392, 335_609_856, 335_544_320], // kg5
+        vec![269_484_032, 268_500_992, 268_435_456], // kg4
+        vec![201_457_664, 201_392_128], // kg3
+        vec![201_326_592],              // kg2
+        vec![262_144, 196_608, 131_072, 65_536], // kg1
+        vec![450, 0],                   // kg0
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{apply_patcher_meta_rsv, get_min_rsv};

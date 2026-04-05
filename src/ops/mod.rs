@@ -6,3 +6,4 @@ pub mod dspl;
 pub mod info;
 pub mod merge;
 pub mod split;
+pub mod verify;
