@@ -4,7 +4,7 @@ use rsa::BigUint;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::crypto::aes_ecb;
@@ -174,14 +174,12 @@ fn run_verify<R: Read + Seek>(
 ) -> Result<()> {
     let token = container_token(path);
     let mut feed = String::new();
-    let mut overall_verdict = true;
-
     if text_file.is_some() {
         // Non-interactive mode: respect vertype
         let (dec_verdict, dec_output) = run_dec_test(entries, reader, path, ks, token)?;
         print!("{}", dec_output);
         feed.push_str(&dec_output);
-        overall_verdict = dec_verdict;
+        let mut overall_verdict = dec_verdict;
 
         if vertype == "lv2" || vertype == "lv3" {
             let (sig_verdict, header_info, sig_output) = run_sig_test(entries, reader, ks, token)?;
@@ -333,10 +331,6 @@ fn run_dec_test<R: Read + Seek>(
         .iter()
         .filter(|e| e.name.ends_with(".nca"))
         .collect();
-    let ncz_entries: Vec<&ContainerEntry> = entries
-        .iter()
-        .filter(|e| e.name.ends_with(".ncz"))
-        .collect();
     let tik_entries: Vec<&ContainerEntry> = entries
         .iter()
         .filter(|e| e.name.ends_with(".tik"))
@@ -390,7 +384,7 @@ fn run_dec_test<R: Read + Seek>(
             let title_id = format!("{:016X}", header.title_id);
             let content_type = content_type_py(header.content_type_enum());
             out.push_str(&format!("{} - {}\n", title_id, content_type));
-            let (correct, baddec) = check_nca_dec(entry, &header, reader, ks, &ticket_map);
+            let (correct, _baddec) = check_nca_dec(entry, &header, reader, ks, &ticket_map);
             if correct {
                 if is_cnmt {
                     out.push_str(&format!("{}{} -> is CORRECT\n", tabs, entry.name));
@@ -1561,8 +1555,6 @@ fn restore_header_tr(
         let c1_bytes = hex::decode(&c1).ok()?;
         let c2_bytes = hex::decode(&c2).ok()?;
         let tr1_bytes = hex::decode(&tr1).ok()?;
-        let tr2b_bytes = hex::decode(&tr2b).ok()?;
-
         // Build headdata1 with card flag
         let mut hd1 = Vec::new();
         hd1.extend_from_slice(&raw[0x200..0x206]);
@@ -1760,8 +1752,6 @@ fn try_rsv_bruteforce<R: Read + Seek>(
         return (false, vec![], None, false);
     };
 
-    let master_key_rev = header.key_generation();
-
     // Read the full NCA content
     reader.seek(SeekFrom::Start(entry.abs_offset)).ok();
     let mut nca_data = vec![0u8; entry.size as usize];
@@ -1797,7 +1787,7 @@ fn try_rsv_bruteforce<R: Read + Seek>(
         let section_enc = &nca_data[sec_start..sec_end];
         let crypto_type = header.section_crypto_type(sec_idx);
 
-        let mut section_plain = if crypto_type == 1 || crypto_type == 0 {
+        let section_plain = if crypto_type == 1 || crypto_type == 0 {
             section_enc.to_vec()
         } else {
             let nonce = header.section_ctr_nonce(sec_idx);
