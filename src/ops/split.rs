@@ -772,6 +772,13 @@ fn parse_cnmt_from_section_bytes(section_data: &[u8]) -> Option<Cnmt> {
 }
 
 fn parse_nacp_title_from_section_bytes(section_data: &[u8]) -> Option<String> {
+    // Python's CONTROL title lookup scans the raw section payload around the
+    // expected NACP offsets before it ever reasons about inner file layout.
+    // Prefer that path first for merge/split naming parity.
+    if let Some(title) = crate::formats::nacp::parse_title_heuristic_scan(section_data) {
+        return Some(title);
+    }
+
     for off in pfs0_candidate_offsets(section_data) {
         let mut cursor = Cursor::new(section_data);
         let Ok(pfs) = Pfs0::parse_at(&mut cursor, off as u64) else {
@@ -786,7 +793,7 @@ fn parse_nacp_title_from_section_bytes(section_data: &[u8]) -> Option<String> {
             }
         }
     }
-    crate::formats::nacp::parse_title_heuristic_scan(section_data)
+    None
 }
 
 fn parse_cnmt_from_section_bytes_allow_empty(section_data: &[u8]) -> Option<Cnmt> {

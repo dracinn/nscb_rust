@@ -944,6 +944,7 @@ fn build_merge_filename_metadata(
         title_name,
         nutdb.try_load_cached_index().ok().flatten().as_ref(),
         input_paths.first().copied().unwrap_or("merged"),
+        true,
     );
 
     Some(format!(
@@ -968,6 +969,7 @@ fn build_rename_plan_metadata(
         title_name,
         Some(nutdb),
         input_path,
+        false,
     );
     plan.language_tag = crate::ops::info::control_language_tag(input_path, ks);
     Some(plan)
@@ -1011,6 +1013,7 @@ fn build_name_plan(
     title_name: Option<String>,
     nutdb: Option<&crate::nutdb::NutdbIndex>,
     input_path: &str,
+    prefer_input_name_fallback: bool,
 ) -> RenameNamePlan {
     let mut base_count = 0u32;
     let mut update_count = 0u32;
@@ -1050,44 +1053,41 @@ fn build_name_plan(
         (MergeKind::Dlc, dlc_tid.unwrap_or(0))
     };
     let selected_tid_str = format!("{selected_tid:016X}");
+    let input_name = infer_game_name_from_path(input_path);
+    let nutdb_name = nutdb.and_then(|index| {
+        index
+            .display_name_for(&selected_tid_str)
+            .or_else(|| {
+                update_tid
+                    .map(|tid| format!("{tid:016X}"))
+                    .and_then(|tid| index.display_name_for(&tid))
+            })
+            .or_else(|| {
+                dlc_tid
+                    .map(|tid| format!("{tid:016X}"))
+                    .and_then(|tid| index.display_name_for(&tid))
+            })
+    });
 
     let filtered_title_name = title_name.filter(|s| !s.trim().is_empty() && s != "DLC");
-    let used_fallback_title = filtered_title_name.is_none()
-        && nutdb
-            .and_then(|index| {
-                index
-                    .display_name_for(&selected_tid_str)
-                    .or_else(|| {
-                        update_tid
-                            .map(|tid| format!("{tid:016X}"))
-                            .and_then(|tid| index.display_name_for(&tid))
-                    })
-                    .or_else(|| {
-                        dlc_tid
-                            .map(|tid| format!("{tid:016X}"))
-                            .and_then(|tid| index.display_name_for(&tid))
-                    })
-            })
-            .is_none();
+    let used_fallback_title = filtered_title_name.is_none() && nutdb_name.is_none();
     let name = filtered_title_name
         .filter(|s| !s.trim().is_empty() && s != "DLC")
         .or_else(|| {
-            nutdb.and_then(|index| {
-                index
-                    .display_name_for(&selected_tid_str)
-                    .or_else(|| {
-                        update_tid
-                            .map(|tid| format!("{tid:016X}"))
-                            .and_then(|tid| index.display_name_for(&tid))
-                    })
-                    .or_else(|| {
-                        dlc_tid
-                            .map(|tid| format!("{tid:016X}"))
-                            .and_then(|tid| index.display_name_for(&tid))
-                    })
-            })
+            if prefer_input_name_fallback {
+                Some(input_name.clone())
+            } else {
+                nutdb_name.clone()
+            }
         })
-        .unwrap_or_else(|| infer_game_name_from_path(input_path));
+        .or_else(|| {
+            if prefer_input_name_fallback {
+                nutdb_name.clone()
+            } else {
+                Some(input_name.clone())
+            }
+        })
+        .unwrap_or(input_name);
     let display_name = python_title_spacing(&name);
     let version = latest_version.unwrap_or(0);
     let content_suffix = build_content_suffix(base_count, update_count, dlc_count);
@@ -1773,6 +1773,7 @@ mod tests {
             None,
             Some(&index),
             "ignored/path/file.nsp",
+            false,
         );
 
         assert_eq!(plan.title_id, "0100F8F0000A3401");
@@ -1784,6 +1785,44 @@ mod tests {
     fn rename_fallback_marks_unresolved_files_for_checking() {
         let fallback = build_rename_filename_fallback("/tmp/Unknown Dump.nsp", "nsp");
         assert_eq!(fallback, "Unknown Dump (needscheck).nsp");
+    }
+
+    #[test]
+    fn merge_name_plan_prefers_input_name_before_nutdb_fallback() {
+        let mut records = HashMap::new();
+        records.insert(
+            0x0100F8F0000A2000,
+            MergeTitleRecord {
+                title_id: 0x0100F8F0000A2000,
+                version: 0,
+                kind: MergeKind::Base,
+            },
+        );
+        let mut titles = HashMap::new();
+        titles.insert(
+            "0100F8F0000A2000".to_string(),
+            NutdbTitle {
+                name: Some("Nutdb Name".to_string()),
+                publisher: None,
+                languages: vec![],
+                version: Some(0),
+            },
+        );
+        let index = NutdbIndex {
+            source_url: "test".to_string(),
+            titles,
+        };
+
+        let plan = build_name_plan(
+            &records,
+            Some(0),
+            None,
+            Some(&index),
+            "/tmp/OCTOPATH TRAVELER [0100F8F0000A2000][v0].nsp",
+            true,
+        );
+
+        assert_eq!(plan.display_name, "OCTOPATH TRAVELER");
     }
 
     #[test]

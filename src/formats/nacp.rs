@@ -6,32 +6,49 @@ use crate::error::{NscbError, Result};
 /// - title: 0x200 bytes
 /// - publisher: 0x100 bytes
 ///
-/// We return the first non-empty title entry.
+/// Prefer the first entry with both title and publisher, matching Python's
+/// CONTROL title selection more closely. Fall back to the first plausible
+/// title when publisher metadata is sparse.
 pub fn parse_title(data: &[u8]) -> Result<String> {
     const LANG_ENTRIES: usize = 16;
     const ENTRY_SIZE: usize = 0x300;
     const TITLE_SIZE: usize = 0x200;
+    const PUBLISHER_SIZE: usize = 0x100;
 
     if data.len() < ENTRY_SIZE {
         return Err(NscbError::InvalidData("NACP too short".to_string()));
     }
 
+    let mut first_title_only: Option<String> = None;
     for i in 0..LANG_ENTRIES {
         let start = i * ENTRY_SIZE;
-        if start + TITLE_SIZE > data.len() {
+        if start + TITLE_SIZE + PUBLISHER_SIZE > data.len() {
             break;
         }
-        let raw = &data[start..start + TITLE_SIZE];
-        let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
-        let s = String::from_utf8_lossy(&raw[..end]).trim().to_string();
-        if is_plausible_title(&s) {
-            return Ok(s);
+        let title = parse_field(&data[start..start + TITLE_SIZE]);
+        let publisher = parse_field(&data[start + TITLE_SIZE..start + TITLE_SIZE + PUBLISHER_SIZE]);
+        if is_plausible_title(&title) {
+            if first_title_only.is_none() {
+                first_title_only = Some(title.clone());
+            }
+            if is_plausible_publisher(&publisher) {
+                return Ok(title);
+            }
         }
+    }
+
+    if let Some(title) = first_title_only {
+        return Ok(title);
     }
 
     Err(NscbError::InvalidData(
         "No non-empty title in NACP".to_string(),
     ))
+}
+
+fn parse_field(raw: &[u8]) -> String {
+    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+    String::from_utf8_lossy(&raw[..end]).trim().to_string()
 }
 
 /// Parse title from a NACP-style language block at a known base offset.
@@ -127,4 +144,31 @@ pub fn parse_title_heuristic_scan(data: &[u8]) -> Option<String> {
         off += 0x100;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_title;
+
+    #[test]
+    fn parse_title_prefers_entry_with_publisher() {
+        let mut data = vec![0u8; 0x300 * 16];
+        data[0..17].copy_from_slice(b"Octopath Traveler");
+
+        let second = 0x300;
+        data[second..second + 17].copy_from_slice(b"OCTOPATH TRAVELER");
+        data[second + 0x200..second + 0x200 + 15].copy_from_slice(b"SQUARE ENIX LTD");
+
+        let title = parse_title(&data).expect("title parses");
+        assert_eq!(title, "OCTOPATH TRAVELER");
+    }
+
+    #[test]
+    fn parse_title_falls_back_to_first_plausible_title() {
+        let mut data = vec![0u8; 0x300 * 16];
+        data[0..17].copy_from_slice(b"Octopath Traveler");
+
+        let title = parse_title(&data).expect("title parses");
+        assert_eq!(title, "Octopath Traveler");
+    }
 }
