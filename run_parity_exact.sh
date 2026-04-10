@@ -136,6 +136,114 @@ run_rename_parity_case() {
   compare_names "$rust_out" "$py_out" "$label"
 }
 
+write_base_only_python_nutdb_fixture() {
+  local py_root="$1"
+  mkdir -p "$py_root/zconfig/DB"
+  python3 - "$py_root/zconfig/DB/nutdb.json" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "0": {
+                "id": "010054B01AD92000",
+                "name": "Base Game",
+                "publisher": "Parity Test",
+                "languages": ["en"],
+                "version": "0",
+            }
+        },
+        indent=2,
+    )
+)
+PY
+}
+
+write_base_only_rust_nutdb_cache() {
+  local cache_dir="$1"
+  mkdir -p "$cache_dir"
+  python3 - "$cache_dir" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+cache_dir = Path(sys.argv[1])
+source_url = "https://raw.githubusercontent.com/blawar/titledb/master/US.en.json"
+
+(cache_dir / "nutdb.index.json").write_text(
+    json.dumps(
+        {
+            "source_url": source_url,
+            "titles": {
+                "010054B01AD92000": {
+                    "name": "Base Game",
+                    "publisher": "Parity Test",
+                    "languages": ["en"],
+                    "version": 0,
+                }
+            },
+        },
+        indent=2,
+    )
+)
+
+(cache_dir / "nutdb.meta.json").write_text(
+    json.dumps(
+        {
+            "source_url": source_url,
+            "etag": None,
+            "last_modified": None,
+            "raw_sha256": "parity-fixture",
+        },
+        indent=2,
+    )
+)
+PY
+}
+
+run_rename_parity_case_base_only_nutdb() {
+  local label="$1"
+  local source="$2"
+  local input_name="$3"
+  local py_type="$4"
+  shift 4
+  local rust_dir="$OUT_DIR/rename_cases/$label/rust"
+  local py_root="$OUT_DIR/rename_cases/$label/py_root"
+  local py_dir="$py_root/rename"
+  local rust_cache="$OUT_DIR/rename_cases/$label/rust_nutdb_cache"
+  local rust_log="$OUT_DIR/logs/${label}_rust.log"
+  local py_log="$OUT_DIR/logs/${label}_py.log"
+  local -a extra_args=("$@")
+
+  mkdir -p "$rust_dir" "$py_dir" "$py_root"
+  ln -s "$source" "$rust_dir/$input_name"
+  ln -s "$source" "$py_dir/$input_name"
+  ln -sfn "$PY_ZTOOLS" "$py_root/ztools"
+  ln -sfn "$KEYS" "$py_root/prod.keys"
+  write_base_only_python_nutdb_fixture "$py_root"
+  write_base_only_rust_nutdb_cache "$rust_cache"
+
+  (
+    cd "$ROOT_DIR"
+    "${RUST_BIN[@]}" --renamef "$rust_dir" --keys "$KEYS" --nutdb-cache-dir "$rust_cache" \
+      "${extra_args[@]}" >"$rust_log" 2>&1
+  )
+  (
+    cd "$py_root"
+    "$PYTHON_BIN" ztools/squirrel.py --renamef "$py_dir" --type "$py_type" \
+      "${extra_args[@]}" >"$py_log" 2>&1
+  )
+
+  local rust_out py_out
+  rust_out="$(single_file_in_dir "$rust_dir")"
+  py_out="$(single_file_in_dir "$py_dir")"
+  need_file "$rust_out"
+  need_file "$py_out"
+  compare_names "$rust_out" "$py_out" "$label"
+}
+
 sha256_skip_prefix() {
   local input="$1"
   local skip_bytes="$2"
@@ -470,6 +578,9 @@ if [[ "$HAVE_PY" -eq 1 ]]; then
     --dlcrname true
   run_rename_parity_case "rename_dlcrname_tag" \
     "${DLC_FILES[0]}" "Tagged DLC.${DLC_EXT}" "$DLC_EXT" \
+    --dlcrname tag
+  run_rename_parity_case_base_only_nutdb "rename_dlcrname_tag_base_only_nutdb" \
+    "${DLC_FILES[0]}" "Tagged DLC Base Only.${DLC_EXT}" "$DLC_EXT" \
     --dlcrname tag
 fi
 

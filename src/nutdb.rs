@@ -105,6 +105,20 @@ impl NutdbIndex {
             _ => None,
         }
     }
+
+    pub fn python_dlc_name_for(&self, title_id: &str) -> Option<String> {
+        let title_id = normalize_title_id(title_id)?;
+        let dlc_name = self
+            .lookup(&title_id)
+            .and_then(|title| title.name.clone())?;
+        let base_name = self
+            .lookup(&base_title_id(&title_id))
+            .and_then(|title| title.name.clone());
+        match base_name {
+            Some(base) if base != dlc_name => Some(format!("{base} [{dlc_name}]")),
+            _ => Some(dlc_name),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -542,7 +556,30 @@ mod tests {
             index.display_name_for("0100F8F0000A3401").as_deref(),
             Some("Base Game [Expansion Pack]")
         );
+        assert_eq!(
+            index.python_dlc_name_for("0100F8F0000A3401").as_deref(),
+            Some("Base Game [Expansion Pack]")
+        );
         assert_eq!(index.languages_for("0100F8F0000A3401"), vec!["en", "fr"]);
+    }
+
+    #[test]
+    fn python_dlc_name_for_requires_exact_dlc_entry() {
+        let json = r#"{
+            "0": {"id":"0100F8F0000A2000","name":"Base Game","publisher":"Studio","languages":["en"],"version":"0"}
+        }"#;
+
+        let index = build_index_from_reader(
+            json.as_bytes(),
+            "http://example.test/nutdb.json".to_string(),
+        )
+        .expect("index builds");
+
+        assert_eq!(
+            index.display_name_for("0100F8F0000A3401").as_deref(),
+            Some("Base Game [DLC 1025]")
+        );
+        assert_eq!(index.python_dlc_name_for("0100F8F0000A3401"), None);
     }
 
     #[test]

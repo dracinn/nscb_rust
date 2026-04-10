@@ -113,9 +113,13 @@ Behavior:
   `--addlangue <true|false>`
   `--noversion <false|true|xci_no_v0>`
   `--dlcrname <false|true|tag>`
+- `--dlcrname tag` matches Python rename behavior:
+  default `skip_corr_tid` uses an exact DLC NUTDB entry when present, otherwise falls back to
+  `DLC <number>`; `--renmode force --dlcrname tag` keeps the resolved name and appends `[DLC <number>]`
 - parity-tested against Python for exact rename output in these cases:
   basic rename, `force`, `skip_corr_tid`, `skip_if_tid`, `addlangue`,
-  `noversion=true`, `noversion=xci_no_v0`, `dlcrname=true`, `dlcrname=tag`
+  `noversion=true`, `noversion=xci_no_v0`, `dlcrname=true`, `dlcrname=tag`,
+  `force + dlcrname=tag`, and `dlcrname=tag` with a base-only NUTDB fixture
 - appends ` (SeemsDuplicate)` when the target filename already exists
 - appends ` (needscheck)` when a valid title name/title ID cannot be resolved
 

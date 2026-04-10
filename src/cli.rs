@@ -1187,7 +1187,7 @@ fn build_display_name_with_options(
 
 fn python_dlc_lookup_name(plan: &RenameNamePlan, nutdb: &crate::nutdb::NutdbIndex) -> String {
     nutdb
-        .display_name_for(&plan.title_id)
+        .python_dlc_name_for(&plan.title_id)
         .unwrap_or_else(|| python_dlc_number_name(plan, false))
 }
 
@@ -1968,6 +1968,47 @@ mod tests {
         let index = NutdbIndex {
             source_url: "test".to_string(),
             titles: HashMap::new(),
+        };
+        let out = build_display_name_with_options(
+            &plan,
+            &index,
+            RenameOptions {
+                mode: RenameMode::SkipCorrectTid,
+                add_language: false,
+                no_version: NoVersionMode::Keep,
+                dlc_mode: DlcRenameMode::AppendTag,
+            },
+        );
+        assert_eq!(out, "DLC 1025");
+    }
+
+    #[test]
+    fn dlc_tag_mode_ignores_base_name_without_exact_dlc_match() {
+        let plan = RenameNamePlan {
+            selected_kind: MergeKind::Dlc,
+            title_id: "0100F8F0000A3401".to_string(),
+            version: 0,
+            display_name: "Tagged DLC".to_string(),
+            content_suffix: String::new(),
+            base_title_id: Some("0100F8F0000A2000".to_string()),
+            update_title_id: None,
+            dlc_title_id: Some("0100F8F0000A3401".to_string()),
+            language_tag: None,
+            used_fallback_title: true,
+        };
+        let mut titles = HashMap::new();
+        titles.insert(
+            "0100F8F0000A2000".to_string(),
+            NutdbTitle {
+                name: Some("Base Game".to_string()),
+                publisher: None,
+                languages: Vec::new(),
+                version: None,
+            },
+        );
+        let index = NutdbIndex {
+            source_url: "test".to_string(),
+            titles,
         };
         let out = build_display_name_with_options(
             &plan,
