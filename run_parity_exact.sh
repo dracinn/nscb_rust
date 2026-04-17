@@ -272,6 +272,48 @@ newest_file() {
   find "$dir" -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-
 }
 
+snapshot_top_level_entries() {
+  local src_dir="$1"
+  local out_file="$2"
+  : >"$out_file"
+  while IFS= read -r -d '' entry; do
+    local name
+    name="$(basename "$entry")"
+    if [[ -d "$entry" ]]; then
+      printf 'd\t%s\n' "$name" >>"$out_file"
+    elif [[ -f "$entry" ]]; then
+      printf 'f\t%s\t%s\n' "$name" "$(stat -c '%s' "$entry")" >>"$out_file"
+    else
+      printf 'o\t%s\n' "$name" >>"$out_file"
+    fi
+  done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+}
+
+snapshot_split_regression_entries() {
+  local src_dir="$1"
+  local out_file="$2"
+  : >"$out_file"
+  while IFS= read -r -d '' entry; do
+    local name
+    name="$(basename "$entry")"
+    if [[ -d "$entry" ]]; then
+      printf 'd\t%s\n' "$name" >>"$out_file"
+    elif [[ -f "$entry" ]]; then
+      if [[ "$name" == "dirlist.txt" ]]; then
+        local normalized=""
+        while IFS= read -r line; do
+          normalized+="$(basename "$line")|"
+        done <"$entry"
+        printf 'f\t%s\t%s\n' "$name" "$normalized" >>"$out_file"
+      else
+        printf 'f\t%s\t%s\n' "$name" "$(stat -c '%s' "$entry")" >>"$out_file"
+      fi
+    else
+      printf 'o\t%s\n' "$name" >>"$out_file"
+    fi
+  done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+}
+
 normalize_info_output() {
   local input="$1"
   local output="$2"
@@ -461,6 +503,44 @@ run_py_info() {
   )
 }
 
+run_split_artifact_regression() {
+  if [[ "$HAVE_PY" -ne 1 ]]; then
+    echo "split_artifact_python_reference_missing: skip"
+    return
+  fi
+
+  log "Split artifact regression"
+  mkdir -p "$OUT_DIR/split_artifact_split_py" "$OUT_DIR/split_artifact_split_rust"
+  (
+    cd "$PY_ZTOOLS"
+    "$PYTHON_BIN" squirrel.py --splitter "$BASE_FILE" -o "$OUT_DIR/split_artifact_split_py" >"$OUT_DIR/logs/py_split_artifact_split.log" 2>&1
+  )
+  (
+    cd "$ROOT_DIR"
+    "${RUST_BIN[@]}" --splitter "$BASE_FILE" --ofolder "$OUT_DIR/split_artifact_split_rust" --keys "$KEYS" >"$OUT_DIR/logs/rust_split_artifact_split.log" 2>&1
+  )
+  hash_nca_set_nested "$OUT_DIR/split_artifact_split_rust" "$OUT_DIR/cmp/split_artifact_split_rust.sha"
+  hash_nca_set_nested "$OUT_DIR/split_artifact_split_py" "$OUT_DIR/cmp/split_artifact_split_py.sha"
+  compare_hash_sets "$OUT_DIR/cmp/split_artifact_split_rust.sha" "$OUT_DIR/cmp/split_artifact_split_py.sha" "split_artifact_split_payload"
+  snapshot_split_regression_entries "$OUT_DIR/split_artifact_split_rust" "$OUT_DIR/cmp/split_artifact_split_rust.entries"
+  snapshot_split_regression_entries "$OUT_DIR/split_artifact_split_py" "$OUT_DIR/cmp/split_artifact_split_py.entries"
+  diff -u "$OUT_DIR/cmp/split_artifact_split_py.entries" "$OUT_DIR/cmp/split_artifact_split_rust.entries" >"$OUT_DIR/cmp/split_artifact_split_entries.diff" || FAIL=1
+
+  log "Direct split artifact regression"
+  mkdir -p "$OUT_DIR/split_artifact_dspl_py" "$OUT_DIR/split_artifact_dspl_rust"
+  (
+    cd "$PY_ZTOOLS"
+    "$PYTHON_BIN" squirrel.py -dspl "$BASE_FILE" -t nsp -fx files -o "$OUT_DIR/split_artifact_dspl_py" >"$OUT_DIR/logs/py_split_artifact_dspl.log" 2>&1
+  )
+  (
+    cd "$ROOT_DIR"
+    "${RUST_BIN[@]}" --dspl "$BASE_FILE" --type nsp --ofolder "$OUT_DIR/split_artifact_dspl_rust" --keys "$KEYS" >"$OUT_DIR/logs/rust_split_artifact_dspl.log" 2>&1
+  )
+  snapshot_top_level_entries "$OUT_DIR/split_artifact_dspl_rust" "$OUT_DIR/cmp/split_artifact_dspl_rust.entries"
+  snapshot_top_level_entries "$OUT_DIR/split_artifact_dspl_py" "$OUT_DIR/cmp/split_artifact_dspl_py.entries"
+  diff -u "$OUT_DIR/cmp/split_artifact_dspl_py.entries" "$OUT_DIR/cmp/split_artifact_dspl_rust.entries" >"$OUT_DIR/cmp/split_artifact_dspl_entries.diff" || FAIL=1
+}
+
 need_file "$KEYS"
 need_file "$BASE_FILE"
 
@@ -504,6 +584,21 @@ log "Build Rust binary"
   cd "$ROOT_DIR"
   cargo build >"$OUT_DIR/logs/cargo_build.log" 2>&1
 )
+
+run_split_artifact_regression
+
+if [[ "$PARITY_ONLY" == "split_artifact" ]]; then
+  echo
+  if [[ "$FAIL" -eq 0 ]]; then
+    echo "Split artifact regression PASSED."
+    echo "Artifacts and logs: $OUT_DIR"
+    exit 0
+  else
+    echo "Split artifact regression FAILED." >&2
+    echo "Inspect logs/artifacts under: $OUT_DIR" >&2
+    exit 1
+  fi
+fi
 
 if [[ "$HAVE_PY" -eq 1 ]]; then
   log "Verify parity smoke"
@@ -1005,6 +1100,7 @@ if [[ "$HAVE_PY" -eq 1 ]]; then
   find "$OUT_DIR/rust_dspl_xci" -maxdepth 1 -type f \( -name '*.xci' -o -name '*.nsp' \) -printf '%f\n' | sort >"$OUT_DIR/cmp/rust_dspl_xci.names"
   find "$OUT_DIR/py_dspl_xci" -maxdepth 1 -type f \( -name '*.xci' -o -name '*.nsp' \) -printf '%f\n' | sort >"$OUT_DIR/cmp/py_dspl_xci.names"
   diff -u "$OUT_DIR/cmp/py_dspl_xci.names" "$OUT_DIR/cmp/rust_dspl_xci.names" >"$OUT_DIR/cmp/dspl_xci_names.diff" || FAIL=1
+
 fi
 
 log "Info parity on merged XCI"

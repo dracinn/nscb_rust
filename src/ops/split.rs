@@ -133,7 +133,13 @@ pub(crate) fn split_output_name(
     base_name: &str,
 ) -> String {
     let tid = format!("{:016x}", group_id);
-    match title_type {
+    let base_name = crate::util::filename::sanitize_python_split_title(base_name);
+    let base_name = if base_name.is_empty() {
+        "-".to_string()
+    } else {
+        base_name
+    };
+    let name = match title_type {
         Some(TitleType::Patch) => {
             let v = version.unwrap_or(0);
             format!("{} [{}][v{}][UPD].nsp", base_name, tid, v)
@@ -159,7 +165,8 @@ pub(crate) fn split_output_name(
                 format!("{}.nsp", tid)
             }
         }
-    }
+    };
+    name
 }
 
 fn split_output_folder_name(
@@ -171,6 +178,41 @@ fn split_output_folder_name(
     split_output_name(group_id, version, title_type, base_name)
         .trim_end_matches(".nsp")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_output_name;
+    use crate::formats::types::TitleType;
+
+    #[test]
+    fn split_output_name_regression_sanitizes_windows_unsafe_title_chars() {
+        let out = split_output_name(
+            0x01001E1025696000,
+            Some(65536),
+            Some(TitleType::Patch),
+            "Ghost Master: Resurrection/Trial",
+        );
+
+        assert!(!out.contains(':'), "unexpected ':' in {out}");
+        assert!(!out.contains('/'), "unexpected '/' in {out}");
+        assert_eq!(
+            out,
+            "Ghost Master Resurrection Trial [01001e1025696000][v65536][UPD].nsp"
+        );
+    }
+
+    #[test]
+    fn split_output_name_regression_uses_dash_when_cleanup_empties_title() {
+        let out = split_output_name(
+            0x01001E1025696000,
+            Some(0),
+            Some(TitleType::Application),
+            " :/?.()~ ",
+        );
+
+        assert_eq!(out, "- [01001e1025696000] [v0].nsp");
+    }
 }
 
 fn infer_game_name_from_input(input_path: &str) -> String {
@@ -232,7 +274,9 @@ fn infer_version_from_input(input_path: &str) -> Option<u32> {
 fn split_xci(input_path: &str, output_dir: &str, ks: &KeyStore) -> Result<()> {
     let mut file = BufReader::new(File::open(input_path)?);
     let xci = Xci::parse(&mut file)?;
+    let secure_entries = xci.secure_nca_entries(&mut file)?;
     let groups = group_xci_entries(&xci, &mut file, input_path, ks)?;
+    let python_root_copy = python_split_xci_root_copy_name(&secure_entries, &mut file, ks);
     println!("Found {} title groups in XCI", groups.len());
 
     for group in &groups {
@@ -257,7 +301,54 @@ fn split_xci(input_path: &str, output_dir: &str, ks: &KeyStore) -> Result<()> {
         pb.finish_with_message("Done");
     }
 
+    write_python_split_dirlist(output_dir)?;
+
+    if let Some(root_name) = python_root_copy {
+        if let Some(entry) = secure_entries.iter().find(|entry| entry.name == root_name) {
+            let out_file = Path::new(output_dir).join(&entry.name);
+            let mut out = BufWriter::new(File::create(out_file)?);
+            uio::copy_section(&mut file, &mut out, entry.abs_offset, entry.size, None)?;
+            out.flush()?;
+        }
+    }
+
     Ok(())
+}
+
+fn write_python_split_dirlist(output_dir: &str) -> Result<()> {
+    let mut entries = std::fs::read_dir(output_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    entries.sort();
+
+    let mut out = BufWriter::new(File::create(Path::new(output_dir).join("dirlist.txt"))?);
+    for entry in entries {
+        writeln!(out, "{}", entry.display())?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+fn python_split_xci_root_copy_name<R: Read + Seek>(
+    secure_entries: &[crate::formats::xci::SecureNcaEntry],
+    reader: &mut R,
+    ks: &KeyStore,
+) -> Option<String> {
+    let mut last = None;
+    for entry in secure_entries {
+        if let Ok(info) = nca::parse_nca_info(reader, entry.abs_offset, entry.size, &entry.name, ks)
+        {
+            if info.content_type == Some(crate::formats::types::ContentType::Meta) {
+                if let Some(cnmt) = parse_cnmt_from_meta_nca(reader, entry.abs_offset, ks) {
+                    for content in cnmt.content_entries {
+                        last = Some(format!("{}.nca", content.nca_id()));
+                    }
+                }
+            }
+        }
+    }
+    last
 }
 
 fn infer_game_name_from_xci<R: Read + Seek>(

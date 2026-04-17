@@ -80,6 +80,12 @@ fn python_dspl_output_name(group: &TitleGroup, output_type: &str) -> String {
         Some(crate::formats::types::TitleType::AddOnContent) => "DLC".to_string(),
         _ => python_title_spacing(&group.game_name),
     };
+    let title = crate::util::filename::sanitize_python_split_title(&title);
+    let title = if title.is_empty() {
+        "-".to_string()
+    } else {
+        title
+    };
     let ext = if should_emit_xci(group, output_type) {
         "xci"
     } else {
@@ -303,4 +309,46 @@ fn empty_hfs0_partition_0x200() -> Vec<u8> {
     part.extend_from_slice(&0u32.to_le_bytes());
     part.resize(0x200, 0);
     part
+}
+
+#[cfg(test)]
+mod tests {
+    use super::python_dspl_output_name;
+    use crate::formats::types::TitleType;
+    use crate::ops::split::TitleGroup;
+
+    #[test]
+    fn python_dspl_output_name_regression_sanitizes_generated_filename() {
+        let group = TitleGroup {
+            title_id: 0x01001E1025696000,
+            version: Some(65536),
+            title_type: Some(TitleType::Patch),
+            game_name: "Ghost Master: Resurrection/Trial".to_string(),
+            entries: Vec::new(),
+        };
+
+        let out = python_dspl_output_name(&group, "nsp");
+
+        assert!(!out.contains(':'), "unexpected ':' in {out}");
+        assert!(!out.contains('/'), "unexpected '/' in {out}");
+        assert_eq!(
+            out,
+            "Ghost Master Resurrection Trial [01001e1025696000] [v65536].nsp"
+        );
+    }
+
+    #[test]
+    fn python_dspl_output_name_regression_uses_dash_when_cleanup_empties_title() {
+        let group = TitleGroup {
+            title_id: 0x01001E1025696000,
+            version: Some(0),
+            title_type: Some(TitleType::Application),
+            game_name: " :/?.()~ ".to_string(),
+            entries: Vec::new(),
+        };
+
+        let out = python_dspl_output_name(&group, "nsp");
+
+        assert_eq!(out, "- [01001e1025696000] [v0].nsp");
+    }
 }
