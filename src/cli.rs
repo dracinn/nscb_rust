@@ -142,9 +142,15 @@ pub struct Args {
     /// Override the NUTDB cache directory
     #[arg(long = "nutdb-cache-dir")]
     pub nutdb_cache_dir: Option<String>,
+
+    /// Directory for large temporary files (defaults to the OS temp directory)
+    #[arg(long = "temp-dir", value_name = "DIR")]
+    pub temp_dir: Option<String>,
 }
 
 pub fn dispatch(args: Args) -> Result<()> {
+    let temp_dir = crate::util::temp::prepare_dir(args.temp_dir.as_deref())?;
+    let temp_dir = temp_dir.as_deref();
     let nutdb = NutdbStore::new(args.nutdb_cache_dir.as_deref(), args.nutdb_url.as_deref());
 
     if args.nutdb_refresh {
@@ -215,7 +221,7 @@ pub fn dispatch(args: Args) -> Result<()> {
             args.noversion.as_deref(),
             args.dlcrname.as_deref(),
         );
-        let renamed = rename_target(path, ks, &index, rename_options)?;
+        let renamed = rename_target(path, ks, &index, rename_options, temp_dir)?;
         println!("Renamed {} item(s)", renamed);
         return Ok(());
     }
@@ -234,15 +240,16 @@ pub fn dispatch(args: Args) -> Result<()> {
             ));
         }
         let file_refs: Vec<&str> = filtered_files.clone();
-        let merge_name = build_merge_filename_metadata(&file_refs, &args.output_type, ks, &nutdb)
-            .unwrap_or_else(|| build_merge_filename(&file_refs, &args.output_type));
+        let merge_name =
+            build_merge_filename_metadata(&file_refs, &args.output_type, ks, &nutdb, temp_dir)
+                .unwrap_or_else(|| build_merge_filename(&file_refs, &args.output_type));
         let nsp_direct_multi_python_mode = args.output_type.eq_ignore_ascii_case("nsp");
         let output = make_output_path(
             filtered_files.first().copied().unwrap_or("merged"),
             &args.ofolder,
             &merge_name,
         );
-        return crate::ops::merge::merge(
+        return crate::ops::merge::merge_with_temp_dir(
             &file_refs,
             &output,
             ks,
@@ -252,6 +259,7 @@ pub fn dispatch(args: Args) -> Result<()> {
             args.rsvcap,
             args.keypatch,
             args.print_version,
+            temp_dir,
         );
     }
 
@@ -296,12 +304,14 @@ pub fn dispatch(args: Args) -> Result<()> {
     if let Some(path) = &args.compress {
         let ks = get_key_store(&mut key_store, args.keys.as_deref())?;
         let output = make_output_path(path, &args.ofolder, &compress_ext(path));
-        return crate::ops::compress::compress(path, &output, args.level, ks);
+        return crate::ops::compress::compress_with_temp_dir(
+            path, &output, args.level, ks, temp_dir,
+        );
     }
 
     if let Some(path) = &args.decompress {
         let output = make_output_path(path, &args.ofolder, &decompress_ext(path));
-        return crate::ops::decompress::decompress(path, &output);
+        return crate::ops::decompress::decompress_with_temp_dir(path, &output, temp_dir);
     }
 
     if let Some(files) = &args.verify {
@@ -370,6 +380,7 @@ fn rename_target(
     ks: &KeyStore,
     nutdb: &crate::nutdb::NutdbIndex,
     options: RenameOptions,
+    temp_dir: Option<&Path>,
 ) -> Result<usize> {
     let path = Path::new(path);
     let mut targets = Vec::new();
@@ -383,7 +394,7 @@ fn rename_target(
 
     let mut renamed = 0usize;
     for target in targets {
-        if rename_single_file(&target, ks, nutdb, options)? {
+        if rename_single_file(&target, ks, nutdb, options, temp_dir)? {
             renamed += 1;
         }
     }
@@ -438,6 +449,7 @@ fn rename_single_file(
     ks: &KeyStore,
     nutdb: &crate::nutdb::NutdbIndex,
     options: RenameOptions,
+    temp_dir: Option<&Path>,
 ) -> Result<bool> {
     let path_str = path.to_string_lossy().to_string();
     let extension = path
@@ -446,7 +458,7 @@ fn rename_single_file(
         .ok_or_else(|| crate::error::NscbError::InvalidData("Missing file extension".to_string()))?
         .to_ascii_lowercase();
 
-    let plan = build_rename_plan_metadata(&path_str, ks, nutdb);
+    let plan = build_rename_plan_metadata(&path_str, ks, nutdb, temp_dir);
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -810,8 +822,9 @@ fn build_merge_filename_metadata(
     output_type: &str,
     ks: &KeyStore,
     nutdb: &NutdbStore,
+    temp_dir: Option<&Path>,
 ) -> Option<String> {
-    let (records, latest_version, title_name) = collect_title_records(input_paths, ks);
+    let (records, latest_version, title_name) = collect_title_records(input_paths, ks, temp_dir);
     if records.is_empty() {
         return None;
     }
@@ -835,8 +848,9 @@ fn build_rename_plan_metadata(
     input_path: &str,
     ks: &KeyStore,
     nutdb: &crate::nutdb::NutdbIndex,
+    temp_dir: Option<&Path>,
 ) -> Option<RenameNamePlan> {
-    let (records, latest_version, title_name) = collect_title_records(&[input_path], ks);
+    let (records, latest_version, title_name) = collect_title_records(&[input_path], ks, temp_dir);
     if records.is_empty() {
         return None;
     }
@@ -1158,6 +1172,7 @@ fn format_language_tag(languages: &[String]) -> Option<String> {
 fn collect_title_records(
     input_paths: &[&str],
     ks: &KeyStore,
+    temp_dir: Option<&Path>,
 ) -> (HashMap<u64, MergeTitleRecord>, Option<u32>, Option<String>) {
     let mut temp_files: Vec<tempfile::NamedTempFile> = Vec::new();
     let mut effective_paths: Vec<String> = Vec::new();
@@ -1173,9 +1188,13 @@ fn collect_title_records(
             .to_lowercase();
         match ext.as_str() {
             "nsz" | "xcz" => {
-                if let Ok(tmp) = tempfile::NamedTempFile::new() {
+                if let Ok(tmp) = crate::util::temp::named_file(temp_dir) {
                     let tmp_path = tmp.path().to_string_lossy().to_string();
-                    if crate::ops::decompress::decompress(path_str, &tmp_path).is_ok() {
+                    if crate::ops::decompress::decompress_with_temp_dir(
+                        path_str, &tmp_path, temp_dir,
+                    )
+                    .is_ok()
+                    {
                         effective_paths.push(tmp_path);
                         temp_files.push(tmp);
                     } else {

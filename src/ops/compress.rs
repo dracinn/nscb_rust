@@ -32,6 +32,16 @@ struct PackedSecureEntry {
 
 /// Compress NSP to NSZ or XCI to XCZ.
 pub fn compress(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) -> Result<()> {
+    compress_with_temp_dir(input_path, output_path, level, ks, None)
+}
+
+pub fn compress_with_temp_dir(
+    input_path: &str,
+    output_path: &str,
+    level: i32,
+    ks: &KeyStore,
+    temp_dir: Option<&Path>,
+) -> Result<()> {
     let ext = Path::new(input_path)
         .extension()
         .and_then(|e| e.to_str())
@@ -39,8 +49,8 @@ pub fn compress(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) 
         .to_lowercase();
 
     match ext.as_str() {
-        "nsp" => compress_nsp(input_path, output_path, level, ks),
-        "xci" => compress_xci(input_path, output_path, level, ks),
+        "nsp" => compress_nsp(input_path, output_path, level, ks, temp_dir),
+        "xci" => compress_xci(input_path, output_path, level, ks, temp_dir),
         _ => Err(NscbError::UnsupportedFormat(format!(
             "Cannot compress {} files",
             ext
@@ -48,7 +58,13 @@ pub fn compress(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) 
     }
 }
 
-fn compress_nsp(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) -> Result<()> {
+fn compress_nsp(
+    input_path: &str,
+    output_path: &str,
+    level: i32,
+    ks: &KeyStore,
+    temp_dir: Option<&Path>,
+) -> Result<()> {
     println!("Compressing NSP to NSZ...");
 
     let mut file = BufReader::new(File::open(input_path)?);
@@ -104,7 +120,7 @@ fn compress_nsp(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) 
                 nca_size / (1024 * 1024)
             );
 
-            let mut tmp = tempfile::NamedTempFile::new()?;
+            let mut tmp = crate::util::temp::named_file(temp_dir)?;
             file.seek(SeekFrom::Start(abs_offset))?;
             ncz::compress_nca(
                 &mut file,
@@ -152,7 +168,13 @@ fn compress_nsp(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) 
     Ok(())
 }
 
-fn compress_xci(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) -> Result<()> {
+fn compress_xci(
+    input_path: &str,
+    output_path: &str,
+    level: i32,
+    ks: &KeyStore,
+    temp_dir: Option<&Path>,
+) -> Result<()> {
     println!("Compressing XCI to XCZ...");
 
     let mut file = BufReader::new(File::open(input_path)?);
@@ -229,7 +251,7 @@ fn compress_xci(input_path: &str, output_path: &str, level: i32, ks: &KeyStore) 
                     }
                 };
 
-            let mut tmp = tempfile::NamedTempFile::new()?;
+            let mut tmp = crate::util::temp::named_file(temp_dir)?;
             file.seek(SeekFrom::Start(abs_offset))?;
             ncz::compress_nca(
                 &mut file,

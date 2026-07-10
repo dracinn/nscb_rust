@@ -72,6 +72,7 @@ target/release/nscb --help
 - `-t, --type <nsp|xci>`: target type for convert/merge output mode
 - `--level <1-22>`: compression level (default: `3`)
 - `-n, --nodelta`: exclude delta NCAs during merge
+- `--temp-dir <dir>`: store large temporary working files in this directory instead of the OS default temp directory
 
 ## NUTDB Options
 
@@ -260,6 +261,7 @@ Verify modes:
 - Progress bars are implemented for merge/decompress/convert operations, and also for compress/split.
 - Split uses title-aware grouping and writes separate base/update/DLC folders.
 - For large files, always use an output folder (`-o`) to avoid overwriting source content.
+- If the system temp drive is short on space, pass `--temp-dir` with a directory on a larger drive. The directory is created if needed and used for compression, decompression, and compressed-input merge/rename working files.
 - If `--keys` is not set, the app also checks common default key locations.
 
 ## Parity Testing

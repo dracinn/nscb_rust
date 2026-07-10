@@ -114,6 +114,32 @@ pub fn merge(
     keypatch: Option<u8>,
     print_version: bool,
 ) -> Result<()> {
+    merge_with_temp_dir(
+        input_paths,
+        output_path,
+        ks,
+        exclude_deltas,
+        output_type,
+        nsp_direct_multi_python_mode,
+        rsvcap,
+        keypatch,
+        print_version,
+        None,
+    )
+}
+
+pub fn merge_with_temp_dir(
+    input_paths: &[&str],
+    output_path: &str,
+    ks: &KeyStore,
+    exclude_deltas: bool,
+    output_type: &str,
+    nsp_direct_multi_python_mode: bool,
+    rsvcap: Option<u32>,
+    keypatch: Option<u8>,
+    print_version: bool,
+    temp_dir: Option<&Path>,
+) -> Result<()> {
     println!("Collecting NCA files from {} inputs...", input_paths.len());
 
     let mut all_ncas: Vec<MergeEntry> = Vec::new();
@@ -142,9 +168,9 @@ pub fn merge(
                     "  Auto-decompressing {}...",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 );
-                let tmp = tempfile::NamedTempFile::new()?;
+                let tmp = crate::util::temp::named_file(temp_dir)?;
                 let tmp_path = tmp.path().to_string_lossy().to_string();
-                crate::ops::decompress::decompress(path_str, &tmp_path)?;
+                crate::ops::decompress::decompress_with_temp_dir(path_str, &tmp_path, temp_dir)?;
                 effective_inputs.push(EffectiveInput {
                     path: tmp_path,
                     source_was_compressed: true,

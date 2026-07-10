@@ -24,6 +24,14 @@ struct PackedSecureEntry {
 
 /// Decompress NSZ to NSP or XCZ to XCI.
 pub fn decompress(input_path: &str, output_path: &str) -> Result<()> {
+    decompress_with_temp_dir(input_path, output_path, None)
+}
+
+pub fn decompress_with_temp_dir(
+    input_path: &str,
+    output_path: &str,
+    temp_dir: Option<&Path>,
+) -> Result<()> {
     let ext = Path::new(input_path)
         .extension()
         .and_then(|e| e.to_str())
@@ -31,8 +39,8 @@ pub fn decompress(input_path: &str, output_path: &str) -> Result<()> {
         .to_lowercase();
 
     match ext.as_str() {
-        "nsz" => decompress_nsz(input_path, output_path),
-        "xcz" => decompress_xcz(input_path, output_path),
+        "nsz" => decompress_nsz(input_path, output_path, temp_dir),
+        "xcz" => decompress_xcz(input_path, output_path, temp_dir),
         "ncz" => decompress_single_ncz(input_path, output_path),
         _ => Err(NscbError::UnsupportedFormat(format!(
             "Cannot decompress {} files",
@@ -41,7 +49,7 @@ pub fn decompress(input_path: &str, output_path: &str) -> Result<()> {
     }
 }
 
-fn decompress_nsz(input_path: &str, output_path: &str) -> Result<()> {
+fn decompress_nsz(input_path: &str, output_path: &str, temp_dir: Option<&Path>) -> Result<()> {
     println!("Decompressing NSZ to NSP...");
 
     let mut file = BufReader::new(File::open(input_path)?);
@@ -56,7 +64,7 @@ fn decompress_nsz(input_path: &str, output_path: &str) -> Result<()> {
             let abs_offset = nsp.file_abs_offset(entry);
 
             println!("  Decompressing {}...", entry.name);
-            let mut tmp = tempfile::NamedTempFile::new()?;
+            let mut tmp = crate::util::temp::named_file(temp_dir)?;
             let ncz = ncz::NczReader::parse_at(&mut file, abs_offset)?;
             let nca_size = ncz
                 .sections
@@ -101,7 +109,7 @@ fn decompress_nsz(input_path: &str, output_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn decompress_xcz(input_path: &str, output_path: &str) -> Result<()> {
+fn decompress_xcz(input_path: &str, output_path: &str, temp_dir: Option<&Path>) -> Result<()> {
     println!("Decompressing XCZ to XCI...");
 
     let mut file = BufReader::new(File::open(input_path)?);
@@ -120,7 +128,7 @@ fn decompress_xcz(input_path: &str, output_path: &str) -> Result<()> {
     for entry in &secure.entries {
         let abs_offset = secure.file_abs_offset(entry);
         if entry.name.ends_with(".ncz") {
-            let mut tmp = tempfile::NamedTempFile::new()?;
+            let mut tmp = crate::util::temp::named_file(temp_dir)?;
             let ncz_meta = ncz::NczReader::parse_at(&mut file, abs_offset)?;
             let nca_size = ncz_meta
                 .sections
