@@ -22,6 +22,9 @@ use crate::error::{NscbError, Result};
 /// Magic bytes at the start of the NCZ section table.
 pub const NCZ_MAGIC: &[u8; 8] = b"NCZSECTN";
 
+/// Magic bytes at the start of a block-based NCZ block table.
+pub const NCZBLOCK_MAGIC: &[u8; 8] = b"NCZBLOCK";
+
 /// Zstd frame magic (little-endian).
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
@@ -153,6 +156,15 @@ impl NczReader {
     }
 
     fn parse_block_table<R: Read + Seek>(reader: &mut R) -> Result<NczBlockTable> {
+        let mut magic = [0u8; 8];
+        reader.read_exact(&mut magic)?;
+        if &magic != NCZBLOCK_MAGIC {
+            return Err(NscbError::InvalidMagic {
+                expected: "NCZBLOCK".into(),
+                got: String::from_utf8_lossy(&magic).into_owned(),
+            });
+        }
+
         let version = reader.read_u8()?;
         let block_type = reader.read_u8()?;
         let unused = reader.read_u8()?;
