@@ -28,6 +28,10 @@ jobs:
             label: macos-arm64
             artifact_name: nscb_rust-macos-arm64
             binary_path: target/release/nscb
+          - runner: macos-13
+            label: macos-amd64
+            artifact_name: nscb_rust-macos-amd64
+            binary_path: target/release/nscb
 
     steps:
       - name: Checkout
