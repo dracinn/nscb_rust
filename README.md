@@ -41,6 +41,7 @@ target/release/nscb
   - `nscb_rust.exe`
   - `nscb_rust-linux-amd64`
   - `nscb_rust-macos-arm64`
+  - `nscb_rust-macos-amd64`
   - Trigger pattern: `v*` (example: `v0.1.0`)
 - Workflow file:
   - `.github/workflows/release.yml`
