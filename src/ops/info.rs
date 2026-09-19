@@ -19,15 +19,49 @@ use crate::keys::KeyStore;
 use crate::ops::split::{group_nsp_entries, group_xci_entries, parse_cnmt_from_meta_nca};
 
 pub fn content_list(path: &str, ks: &KeyStore) -> Result<()> {
-    let report = build_report(path, ks)?;
-    print!("{}", build_adv_content_text(&report));
+    let mut file = BufReader::new(File::open(path)?);
+    content_list_reader(&mut file, path, ks)
+}
+
+pub fn content_list_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<()> {
+    print!("{}", content_list_text_reader(reader, display_path, ks)?);
     Ok(())
 }
 
+pub fn content_list_text_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<String> {
+    let report = build_report_reader(reader, display_path, ks)?;
+    Ok(build_adv_content_text(&report))
+}
+
 pub fn file_list(path: &str, ks: &KeyStore) -> Result<()> {
-    let report = build_report(path, ks)?;
-    print!("{}", build_adv_file_text(&report));
+    let mut file = BufReader::new(File::open(path)?);
+    file_list_reader(&mut file, path, ks)
+}
+
+pub fn file_list_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<()> {
+    print!("{}", file_list_text_reader(reader, display_path, ks)?);
     Ok(())
+}
+
+pub fn file_list_text_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<String> {
+    let report = build_report_reader(reader, display_path, ks)?;
+    Ok(build_adv_file_text(&report))
 }
 
 pub(crate) fn control_language_tag(path: &str, ks: &KeyStore) -> Option<String> {
@@ -89,9 +123,18 @@ struct GroupAnalysis {
 }
 
 fn build_report(path: &str, ks: &KeyStore) -> Result<Report> {
-    match ext(path).as_str() {
-        "nsp" | "nsz" => build_report_nsp(path, ks),
-        "xci" | "xcz" => build_report_xci(path, ks),
+    let mut file = BufReader::new(File::open(path)?);
+    build_report_reader(&mut file, path, ks)
+}
+
+fn build_report_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<Report> {
+    match ext(display_path).as_str() {
+        "nsp" | "nsz" => build_report_nsp_reader(reader, display_path, ks),
+        "xci" | "xcz" => build_report_xci_reader(reader, display_path, ks),
         other => Err(NscbError::UnsupportedFormat(format!(
             "Cannot inspect {}",
             other
@@ -101,18 +144,34 @@ fn build_report(path: &str, ks: &KeyStore) -> Result<Report> {
 
 fn build_report_nsp(path: &str, ks: &KeyStore) -> Result<Report> {
     let mut file = BufReader::new(File::open(path)?);
-    let nsp = Nsp::parse(&mut file)?;
-    let groups = group_nsp_entries(&nsp, &mut file, path, ks)?;
-    let mut report = build_report_from_groups(&mut file, &groups, ks)?;
-    apply_nsp_cnmt_xml_overrides(&mut file, &nsp, &mut report)?;
+    build_report_nsp_reader(&mut file, path, ks)
+}
+
+fn build_report_nsp_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<Report> {
+    let nsp = Nsp::parse(reader)?;
+    let groups = group_nsp_entries(&nsp, reader, display_path, ks)?;
+    let mut report = build_report_from_groups(reader, &groups, ks)?;
+    apply_nsp_cnmt_xml_overrides(reader, &nsp, &mut report)?;
     Ok(report)
 }
 
 fn build_report_xci(path: &str, ks: &KeyStore) -> Result<Report> {
     let mut file = BufReader::new(File::open(path)?);
-    let xci = Xci::parse(&mut file)?;
-    let groups = group_xci_entries(&xci, &mut file, path, ks)?;
-    build_report_from_groups(&mut file, &groups, ks)
+    build_report_xci_reader(&mut file, path, ks)
+}
+
+fn build_report_xci_reader<R: Read + Seek>(
+    reader: &mut R,
+    display_path: &str,
+    ks: &KeyStore,
+) -> Result<Report> {
+    let xci = Xci::parse(reader)?;
+    let groups = group_xci_entries(&xci, reader, display_path, ks)?;
+    build_report_from_groups(reader, &groups, ks)
 }
 
 fn build_report_from_groups<R: Read + Seek>(
