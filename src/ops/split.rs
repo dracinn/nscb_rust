@@ -18,6 +18,13 @@ use crate::formats::xci::Xci;
 use crate::keys::KeyStore;
 use crate::util::{io as uio, progress};
 
+// CNMT and NACP metadata live near the start of their NCA sections.  Reading
+// and trying every crypto variant over an entire (potentially 64 MiB) section
+// is especially expensive on Android and can make info operations appear to
+// hang for minutes.  Four MiB comfortably covers the metadata layouts we
+// probe while bounding each fallback attempt.
+const METADATA_PROBE_LIMIT: u64 = 4 * 1024 * 1024;
+
 #[derive(Clone, Debug)]
 pub(crate) struct GroupedEntry {
     pub name: String,
@@ -670,13 +677,9 @@ pub(crate) fn parse_cnmt_from_meta_nca<R: Read + Seek>(
         if !sec.is_present() || sec.size() == 0 {
             continue;
         }
-        // Meta CNMT sections are tiny; skip absurdly large sections.
-        if sec.size() > 64 * 1024 * 1024 {
-            continue;
-        }
-
         let sec_abs_offset = nca_abs_offset + sec.start_offset();
-        let mut section_data = vec![0u8; sec.size() as usize];
+        let probe_size = sec.size().min(METADATA_PROBE_LIMIT) as usize;
+        let mut section_data = vec![0u8; probe_size];
         if reader.seek(SeekFrom::Start(sec_abs_offset)).is_err() {
             continue;
         }
@@ -747,11 +750,12 @@ pub(crate) fn parse_cnmt_from_meta_nca<R: Read + Seek>(
     // Fallback: allow empty/edge CNMTs so meta NCAs still get grouped deterministically.
     for sec_idx in 0..4 {
         let sec = &header.section_table[sec_idx];
-        if !sec.is_present() || sec.size() == 0 || sec.size() > 64 * 1024 * 1024 {
+        if !sec.is_present() || sec.size() == 0 {
             continue;
         }
         let sec_abs_offset = nca_abs_offset + sec.start_offset();
-        let mut section_data = vec![0u8; sec.size() as usize];
+        let probe_size = sec.size().min(METADATA_PROBE_LIMIT) as usize;
+        let mut section_data = vec![0u8; probe_size];
         if reader.seek(SeekFrom::Start(sec_abs_offset)).is_err() {
             continue;
         }
@@ -779,12 +783,9 @@ pub(crate) fn parse_nacp_title_from_control_nca<R: Read + Seek>(
         if !sec.is_present() || sec.size() == 0 {
             continue;
         }
-        if sec.size() > 64 * 1024 * 1024 {
-            continue;
-        }
-
         let sec_abs_offset = nca_abs_offset + sec.start_offset();
-        let mut section_data = vec![0u8; sec.size() as usize];
+        let probe_size = sec.size().min(METADATA_PROBE_LIMIT) as usize;
+        let mut section_data = vec![0u8; probe_size];
         if reader.seek(SeekFrom::Start(sec_abs_offset)).is_err() {
             continue;
         }
